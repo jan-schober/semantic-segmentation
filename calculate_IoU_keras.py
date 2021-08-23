@@ -10,9 +10,9 @@ from keras.metrics import MeanIoU
 
 num_classes = 20
 
-target_list = sorted(glob.glob('/home/schober/cityscape_dataset/gtFine/val_zwischenspeicher/carla_0*/*_color.png'))
+target_list = sorted(glob.glob('/home/schober/carla/for_yolov5/target_labels/*_color.png'))
 prediction_augmented = sorted(
-    glob.glob('/home/schober/semantic-segmentation/logs/carla_augmented_segmented/*prediction.png'))
+    glob.glob('/home/schober/semantic-segmentation/logs/best_images/*prediction.png'))
 print(len(target_list))
 print(len(prediction_augmented))
 iou_arr = []
@@ -103,11 +103,11 @@ def main():
 
         target_name = target.split('/')[-1]
         iou_dict[target_name] = empty_array
-        iou = iou_keras.result().numpy()
-        iou_arr.append(iou)
-        iou_keras.reset_state()
+        #iou = iou_keras.result().numpy()
+        #iou_arr.append(iou)
+        #iou_keras.reset_state()
 
-    '''
+
     print('IoU-Keras')
     print(iou_keras.result().numpy())
     values = np.array(iou_keras.get_weights()).reshape(num_classes, num_classes)
@@ -124,12 +124,11 @@ def main():
     print(cls_arr)
     print('Mean mit ignore')
     print(np.sum(cls_arr)/12)
+    #-1.0 wegen der ignore klasse und 11 wweil 11 nicht 0.0 sind
     print('Mean ohne ignore')
-    print((np.sum(cls_arr)-1.0 )/ 11)
-    sys.exit()
-    m_iou = np.mean(iou_arr)
-    np.save('iou_arr_keras_ignore.npy', iou_arr)
-    print(m_iou)
+    print((np.sum(cls_arr)-1.0)/ 11)
+
+
 
     class_names = ['road', 'sidewalk', 'building', 'wall', 'fence', 'pole', 'tl', 'ts', 'vegetation', 'terrain', 'sky',
                    'person', 'rider', 'car', 'truck', 'bus', 'train', 'motorcycle', 'bicycle', 'ignore']
@@ -137,8 +136,8 @@ def main():
     per_class_df = pd.DataFrame.from_dict(iou_dict, orient='index', columns=class_names)
     print(per_class_df.mean(axis=0))
     per_class_df.to_csv('test.csv')
-    '''
-    m_iou_str = "{:.3}".format(0.6228599834489258)
+
+    m_iou_str = "{:.3}".format((np.sum(cls_arr)-1.0)/ 11)
     plt.plot(iou_arr, lw=0.5)
     plt.xlabel('Images')
     plt.ylabel('IoU-Score')
