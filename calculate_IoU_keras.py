@@ -1,23 +1,22 @@
 import glob
-import sys
 from collections import namedtuple
-import sys
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 from keras.metrics import MeanIoU
 
-num_classes = 20
+# folder with the ground truth semantic images
+target_list = sorted(glob.glob('/home/schober/carla/output_carla_town_*/sem_filled/*.png'))
 
-target_list = sorted(glob.glob('/home/schober/carla/for_yolov5/target_labels/*_color.png'))
-prediction_augmented = sorted(
-    glob.glob('/home/schober/semantic-segmentation/logs/best_images/*prediction.png'))
-print(len(target_list))
-print(len(prediction_augmented))
-iou_arr = []
-iou_dict = dict()
+# folder with the predicted semantic images
+prediction_augmented = sorted(glob.glob('/home/schober/semantic-segmentation/logs/best_images/*/*prediction.png'))
 
+# true if we want a plot with iou over images
+plot = True
+fig_name = 'iou_final.eps'
+
+# labels from the cityscapes dataset
+# the labels with capital letters are added to match with the output of the carla semantic segmentation
 Label = namedtuple('Label', [
     'name',
     'id',
@@ -28,7 +27,6 @@ Label = namedtuple('Label', [
     'ignoreInEval',
     'color',
 ])
-
 labels = [
     #       name                     id    trainId   category            catId     hasInstances   ignoreInEval   color
     Label('unlabeled', 0, 255, 'void', 0, False, True, (0, 0, 0)),
@@ -77,80 +75,73 @@ labels = [
 
 
 def main():
+    num_classes = 20
+    iou_arr = []
+    iou_dict = dict()
+
     for target, prediction in zip(target_list, prediction_augmented):
+
+        # reads the target and prediciton image and converts it to trainID grayscale image
         target_img = cv2.imread(target, cv2.COLOR_BGR2RGB)
         target_img = convert_color_id(target_img[:, :, :3])
-
         prediction_img = cv2.imread(prediction, cv2.COLOR_BGR2RGB)
         prediction_img = convert_color_id(prediction_img[:, :, :3])
 
+        # put the ignore label on the exact same positions in target and prediction image
         target_img, prediction_img = ignore_label(target_img, prediction_img)
 
+        # reshape the images for keras
         target_img = target_img.reshape(-1)
         prediction_img = prediction_img.reshape(-1)
 
+        # calculates the iou per imagepair
         iou_keras = MeanIoU(num_classes=num_classes)
         iou_keras.update_state(target_img, prediction_img)
 
+        # create conf matrix to ignore the class with id 19
         conf_matrix = np.array(iou_keras.get_weights()).reshape(num_classes, num_classes)
         empty_array = np.empty(num_classes)
 
-        for j in range(0 , num_classes):
+        # we calculate iou per class
+        for j in range(0, num_classes):
             if (sum(conf_matrix[j, :]) + sum(conf_matrix[:, j]) - conf_matrix[j, j]) == 0:
                 empty_array[j] = 0.0
             else:
-                empty_array[j] = conf_matrix[j, j] / (sum(conf_matrix[j, :]) + sum(conf_matrix[:, j]) - conf_matrix[j, j])
+                empty_array[j] = conf_matrix[j, j] / (
+                        sum(conf_matrix[j, :]) + sum(conf_matrix[:, j]) - conf_matrix[j, j])
+        # if class 19 is 1.0 we ignore it and calculate the mean iou without it
+        if empty_array[19] == 1.0:
+            empty_array_0 = empty_array[empty_array != 0]
+            iou = (np.sum(empty_array_0) - 1.0) / (len(empty_array_0) - 1)
 
-        target_name = target.split('/')[-1]
-        iou_dict[target_name] = empty_array
-        #iou = iou_keras.result().numpy()
-        #iou_arr.append(iou)
-        #iou_keras.reset_state()
-
-
-    print('IoU-Keras')
-    print(iou_keras.result().numpy())
-    values = np.array(iou_keras.get_weights()).reshape(num_classes, num_classes)
-    cls_arr = np.empty(num_classes)
-    for j in range(0, num_classes):
-        if (sum(values[j, :]) +  sum(values[:, j])) == 0.0:
-            cls_arr[j] = 0.0
+        # calculation of the mean iou if class 19 is 0
         else:
-            cls_arr[j] = values[j, j] / (sum(values[j, :]) +  sum(values[:, j])- values[j, j])
-    print(cls_arr)
-    print("Npmean von clsarr")
-    print(np.mean(cls_arr))
-    print('Kommentar')
-    print(cls_arr)
-    print('Mean mit ignore')
-    print(np.sum(cls_arr)/12)
-    #-1.0 wegen der ignore klasse und 11 wweil 11 nicht 0.0 sind
-    print('Mean ohne ignore')
-    print((np.sum(cls_arr)-1.0)/ 11)
+            empty_array_0 = empty_array[empty_array != 0]
+            iou = np.mean(empty_array_0)
+        # append the iou of the image and reset the state for new calculation
+        iou_arr.append(iou)
+        iou_keras.reset_state()
 
+    # calculate the mean iou over all images for plot
+    mean_iou = np.mean(iou_arr)
+    print('Mean IoU over all Images')
+    print(mean_iou)
 
-
-    class_names = ['road', 'sidewalk', 'building', 'wall', 'fence', 'pole', 'tl', 'ts', 'vegetation', 'terrain', 'sky',
-                   'person', 'rider', 'car', 'truck', 'bus', 'train', 'motorcycle', 'bicycle', 'ignore']
-
-    per_class_df = pd.DataFrame.from_dict(iou_dict, orient='index', columns=class_names)
-    print(per_class_df.mean(axis=0))
-    per_class_df.to_csv('test.csv')
-
-    m_iou_str = "{:.3}".format((np.sum(cls_arr)-1.0)/ 11)
-    plt.plot(iou_arr, lw=0.5)
-    plt.xlabel('Images')
-    plt.ylabel('IoU-Score')
-    plt.title('Mean IoU-Score = ' + m_iou_str)
-    plt.savefig('iou_arr_keras_correct.png', dpi=500)
-
-    pd.options.display.max_colwidth = 150
-    iou_pd_aug = pd.DataFrame({'iou': iou_arr, 'path_augmented': prediction_augmented})
-    iou_pd_aug_sort = iou_pd_aug.sort_values(by=['iou'], ascending=True)
-    print(iou_pd_aug_sort.head(25))
+    if plot:
+        m_iou_str = "{:.3}".format(mean_iou)
+        plt.plot(iou_arr, lw=0.5)
+        plt.grid()
+        plt.xlabel('Images')
+        plt.ylabel('IoU-Score')
+        plt.title('Mean IoU-Score = ' + m_iou_str)
+        plt.savefig(fig_name, format='eps', dpi=500)
 
 
 def convert_color_id(img):
+    '''
+    The script gets the color semantic segmentation as input and converts the color image to a grayscale image with the
+    values from the trainID
+    '''
     for label in labels:
         color_rgb = label.color
         color_rgb = [color_rgb[2], color_rgb[1], color_rgb[0]]
@@ -162,14 +153,18 @@ def convert_color_id(img):
 
 
 def ignore_label(target, prediciton):
+    '''
+    This function gets the ground truth and predicted semantic segmented image
+    In both images it searches for the ignore label and adopts both images so that they have the ignore label
+    in the exact same regions, so that in the end we have an iou for the ignore class from 1
+    '''
     tar_mask = (target == [255, 255, 255]).all(axis=2)
     pred_mask = (prediciton == [255, 255, 255]).all(axis=2)
-    target[pred_mask] =     [19, 19, 19]
-    target[tar_mask] =      [19, 19, 19]
+    target[pred_mask] = [19, 19, 19]
+    target[tar_mask] = [19, 19, 19]
     prediciton[pred_mask] = [19, 19, 19]
-    prediciton[tar_mask] =  [19, 19, 19]
+    prediciton[tar_mask] = [19, 19, 19]
     return target, prediciton
-
 
 if __name__ == '__main__':
     main()
